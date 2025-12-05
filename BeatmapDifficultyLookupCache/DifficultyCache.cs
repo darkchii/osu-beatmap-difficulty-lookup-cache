@@ -53,9 +53,6 @@ namespace BeatmapDifficultyLookupCache
             if (request.BeatmapId == 0)
                 return 0;
 
-            if (useDatabase)
-                return await getDatabasedDifficulty(request);
-
             return (await computeAttributes(request)).StarRating;
         }
 
@@ -63,20 +60,6 @@ namespace BeatmapDifficultyLookupCache
         {
             if (request.BeatmapId == 0)
                 return empty_attributes;
-
-            if (useDatabase)
-            {
-                try
-                {
-                    return await getDatabasedAttributes(request);
-                }
-                catch
-                {
-                    // Databased attribute retrieval can fail if the database doesn't contain all attributes for a given beatmap.
-                    // If such a case occurs, fall back to providing just the star rating rather than outputting exceptions.
-                    return new DifficultyAttributes { StarRating = await GetDifficultyRating(request) };
-                }
-            }
 
             return await computeAttributes(request);
         }
@@ -263,26 +246,9 @@ namespace BeatmapDifficultyLookupCache
 
         private async Task<WorkingBeatmap> getBeatmap(int beatmapId)
         {
-            //get executable path
-            string executablePath = Assembly.GetExecutingAssembly().Location;
-            string path = Path.Combine(Path.GetDirectoryName(executablePath) ?? string.Empty, "beatmaps", $"{beatmapId}.osu");
-            // Check if the file is stored locally already (relative to executable)
-            if (File.Exists(path))
-            {
-                logger.LogInformation("Loading beatmap from local cache ({BeatmapId})", beatmapId);
-                // Read file as a StreamReader
-                using (var fileStream
-                    = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
-                {
-                    return new LoaderWorkingBeatmap(fileStream);
-                }
-            }
-
-            logger.LogInformation("Downloading beatmap ({BeatmapId})", beatmapId);
-
             var req = new WebRequest(string.Format(Environment.GetEnvironmentVariable("DOWNLOAD_PATH") ?? "https://osu.ppy.sh/osu/{0}", beatmapId))
             {
-                AllowInsecureRequests = true
+                AllowInsecureRequests = true,
             };
 
             await req.PerformAsync();
@@ -291,16 +257,6 @@ namespace BeatmapDifficultyLookupCache
                 throw new Exception($"Retrieved zero-length beatmap ({beatmapId})!");
 
             LoaderWorkingBeatmap workingBeatmap = new LoaderWorkingBeatmap(req.ResponseStream);
-
-            if(workingBeatmap.BeatmapInfo.Status == BeatmapOnlineStatus.Ranked || workingBeatmap.BeatmapInfo.Status == BeatmapOnlineStatus.Approved || workingBeatmap.BeatmapInfo.Status == BeatmapOnlineStatus.Loved)
-            {
-                req.ResponseStream.Seek(0, SeekOrigin.Begin);
-                // Save the file locally
-                if (!Directory.Exists(Path.GetDirectoryName(path)))
-                    Directory.CreateDirectory(Path.GetDirectoryName(path) ?? string.Empty);
-            
-                await File.WriteAllLinesAsync(path, new StreamReader(req.ResponseStream).ReadToEnd().Split('\n'));
-            }
 
             return workingBeatmap;
         }
