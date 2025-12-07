@@ -19,10 +19,11 @@ namespace BeatmapDifficultyLookupCache
     {
         private readonly Beatmap beatmap;
 
-        public LoaderWorkingBeatmap(Stream stream)
+        public LoaderWorkingBeatmap(Stream stream, bool dispose = true)
             : this(new LineBufferedReader(stream))
         {
-            stream.Dispose();
+            if (dispose)
+                stream.Dispose();
         }
 
         private LoaderWorkingBeatmap(LineBufferedReader reader)

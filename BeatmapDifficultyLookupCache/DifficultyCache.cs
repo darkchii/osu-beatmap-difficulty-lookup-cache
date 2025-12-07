@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -37,16 +38,10 @@ namespace BeatmapDifficultyLookupCache
         private readonly Dictionary<DifficultyRequest, Task<BeatmapStrains>> strainsCache = new Dictionary<DifficultyRequest, Task<BeatmapStrains>>();
         private readonly ILogger logger;
 
-        private readonly bool useDatabase;
-
         public DifficultyCache(ILogger<DifficultyCache> logger)
         {
             this.logger = logger;
-
-            useDatabase = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("USE_DATABASE_LOOKUPS"));
         }
-
-        private static long totalLookups;
 
         public async Task<double> GetDifficultyRating(DifficultyRequest request)
         {
@@ -62,78 +57,6 @@ namespace BeatmapDifficultyLookupCache
                 return empty_attributes;
 
             return await computeAttributes(request);
-        }
-
-        private async Task<DifficultyAttributes> getDatabasedAttributes(DifficultyRequest request)
-        {
-            int mods = getModBitwise(request.RulesetId, request.GetMods());
-
-            beatmap_difficulty_attribute[] rawDifficultyAttributes;
-
-            using (var conn = await DatabaseAccess.GetConnectionAsync())
-            {
-                rawDifficultyAttributes = (await conn.QueryAsync<beatmap_difficulty_attribute>(
-                    "SELECT * FROM osu_beatmap_difficulty_attribs WHERE beatmap_id = @BeatmapId AND mode = @RulesetId AND mods = @ModValue", new
-                    {
-                        BeatmapId = request.BeatmapId,
-                        RulesetId = request.RulesetId,
-                        ModValue = mods
-                    })).ToArray();
-            }
-
-            DifficultyAttributes attributes;
-
-            switch (request.RulesetId)
-            {
-                case 0:
-                    attributes = new OsuDifficultyAttributes();
-                    break;
-
-                case 1:
-                    attributes = new TaikoDifficultyAttributes();
-                    break;
-
-                case 2:
-                    attributes = new CatchDifficultyAttributes();
-                    break;
-
-                case 3:
-                    attributes = new ManiaDifficultyAttributes();
-                    break;
-
-                default:
-                    throw new InvalidOperationException($"Invalid ruleset: {request.RulesetId}");
-            }
-
-            attributes.FromDatabaseAttributes(
-                rawDifficultyAttributes.ToDictionary(a => (int)a.attrib_id, e => (double)e.value),
-                // Empty beatmap since its values aren't serialised out.
-                new APIBeatmap());
-
-            return attributes;
-        }
-
-        private async Task<float> getDatabasedDifficulty(DifficultyRequest request)
-        {
-            int mods = getModBitwise(request.RulesetId, request.GetMods());
-
-            if (Interlocked.Increment(ref totalLookups) % 1000 == 0)
-            {
-                logger.LogInformation("difficulty lookup for (beatmap: {BeatmapId}, ruleset: {RulesetId}, mods: {Mods})",
-                    request.BeatmapId,
-                    request.RulesetId,
-                    mods);
-            }
-
-            using (var conn = await DatabaseAccess.GetConnectionAsync())
-            {
-                return await conn.QueryFirstOrDefaultAsync<float>("SELECT diff_unified from osu.osu_beatmap_difficulty WHERE beatmap_id = @BeatmapId AND mode = @RulesetId and mods = @ModValue", new
-                {
-                    BeatmapId = request.BeatmapId,
-                    RulesetId = request.RulesetId,
-                    ModValue = mods
-                });
-            }
         }
 
         private async Task<DifficultyAttributes> computeAttributes(DifficultyRequest request)
@@ -157,6 +80,7 @@ namespace BeatmapDifficultyLookupCache
                         {
                             var ruleset = available_rulesets.First(r => r.RulesetInfo.OnlineID == request.RulesetId);
                             var mods = apiMods.Select(m => m.ToMod(ruleset)).ToArray();
+                            // Track how long it takes to get the beatmap
                             var beatmap = await getBeatmap(request.BeatmapId);
 
                             var difficultyCalculator = ruleset.CreateDifficultyCalculator(beatmap);
@@ -246,6 +170,28 @@ namespace BeatmapDifficultyLookupCache
 
         private async Task<WorkingBeatmap> getBeatmap(int beatmapId)
         {
+            //Check if a local file exists (./beatmaps/{beatmapId}.osu), at exe path
+            string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "beatmaps", $"{beatmapId}.osu");
+
+            if (File.Exists(localPath))
+            {
+                //If file is older than 1 week, we don't use it
+                var fileInfo = new FileInfo(localPath);
+                if (fileInfo.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-7))
+                {
+                    logger.LogInformation("Local beatmap file is older than 1 week, redownloading (beatmap: {BeatmapId})", beatmapId);
+                }
+                else
+                {
+                    logger.LogInformation("Using local beatmap file (beatmap: {BeatmapId})", beatmapId);
+                    using (var fs = File.OpenRead(localPath))
+                    {
+                        LoaderWorkingBeatmap wb = new LoaderWorkingBeatmap(fs);
+                        return wb;
+                    }
+                }
+            }
+
             var req = new WebRequest(string.Format(Environment.GetEnvironmentVariable("DOWNLOAD_PATH") ?? "https://osu.ppy.sh/osu/{0}", beatmapId))
             {
                 AllowInsecureRequests = true,
@@ -256,7 +202,26 @@ namespace BeatmapDifficultyLookupCache
             if (req.ResponseStream.Length == 0)
                 throw new Exception($"Retrieved zero-length beatmap ({beatmapId})!");
 
-            LoaderWorkingBeatmap workingBeatmap = new LoaderWorkingBeatmap(req.ResponseStream);
+            LoaderWorkingBeatmap workingBeatmap = new LoaderWorkingBeatmap(req.ResponseStream, false);
+
+            // Cache the beatmap locally for future use
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+                //if file exists, overwrite
+
+                using (var fs = File.Create(localPath))
+                {
+                    req.ResponseStream.Seek(0, SeekOrigin.Begin);
+                    await req.ResponseStream.CopyToAsync(fs);
+                }
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Failed to cache beatmap locally: {Message}", e.Message);
+            }
+
+            req.ResponseStream.Dispose();
 
             return workingBeatmap;
         }
@@ -333,7 +298,7 @@ namespace BeatmapDifficultyLookupCache
                     case "FL" when rulesetId == 0:
                         return LegacyMods.Flashlight;
 
-                    case "HD" when rulesetId == 0 && mods.Any(m => m.Acronym == "FL"):
+                    case "HD" when rulesetId == 0:
                         return LegacyMods.Hidden;
 
                     case "TD" when rulesetId == 0:
