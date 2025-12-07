@@ -32,9 +32,9 @@ namespace BeatmapDifficultyLookupCache
     public class DifficultyCache
     {
         private static readonly List<Ruleset> available_rulesets = getRulesets();
-        private static readonly DifficultyAttributes empty_attributes = new DifficultyAttributes(Array.Empty<Mod>(), -1);
+        private static readonly IExtendedDifficultyAttributes empty_attributes = new ExtendedOsuDifficultyAttributes();
 
-        private readonly Dictionary<DifficultyRequest, Task<DifficultyAttributes>> attributesCache = new Dictionary<DifficultyRequest, Task<DifficultyAttributes>>();
+        private readonly Dictionary<DifficultyRequest, Task<IExtendedDifficultyAttributes>> attributesCache = new Dictionary<DifficultyRequest, Task<IExtendedDifficultyAttributes>>();
         private readonly Dictionary<DifficultyRequest, Task<BeatmapStrains>> strainsCache = new Dictionary<DifficultyRequest, Task<BeatmapStrains>>();
         private readonly ILogger logger;
 
@@ -43,15 +43,7 @@ namespace BeatmapDifficultyLookupCache
             this.logger = logger;
         }
 
-        public async Task<double> GetDifficultyRating(DifficultyRequest request)
-        {
-            if (request.BeatmapId == 0)
-                return 0;
-
-            return (await computeAttributes(request)).StarRating;
-        }
-
-        public async Task<DifficultyAttributes> GetAttributes(DifficultyRequest request)
+        public async Task<IExtendedDifficultyAttributes> GetAttributes(DifficultyRequest request)
         {
             if (request.BeatmapId == 0)
                 return empty_attributes;
@@ -59,9 +51,9 @@ namespace BeatmapDifficultyLookupCache
             return await computeAttributes(request);
         }
 
-        private async Task<DifficultyAttributes> computeAttributes(DifficultyRequest request)
+        private async Task<IExtendedDifficultyAttributes> computeAttributes(DifficultyRequest request)
         {
-            Task<DifficultyAttributes>? task;
+            Task<IExtendedDifficultyAttributes>? task;
 
             lock (attributesCache)
             {
@@ -86,10 +78,32 @@ namespace BeatmapDifficultyLookupCache
                             var difficultyCalculator = ruleset.CreateDifficultyCalculator(beatmap);
                             var attributes = difficultyCalculator.Calculate(mods);
 
+                            IExtendedDifficultyAttributes convertedAttributes;
+                            //check ruleset
+                            switch (request.RulesetId)
+                            {
+                                default:
+                                case 0: //osu
+                                    convertedAttributes = ExtendedOsuDifficultyAttributes.FromBase((OsuDifficultyAttributes)attributes);
+                                    break;
+                                case 1: //taiko
+                                    convertedAttributes = ExtendedTaikoDifficultyAttributes.FromBase((TaikoDifficultyAttributes)attributes);
+                                    break;
+                                case 2: //catch
+                                    convertedAttributes = ExtendedCatchDifficultyAttributes.FromBase((CatchDifficultyAttributes)attributes);
+                                    break;
+                                case 3: //mania
+                                    convertedAttributes = ExtendedManiaDifficultyAttributes.FromBase((ManiaDifficultyAttributes)attributes);
+                                    break;
+                            }
+
                             // Trim a few members which we don't consume and only take up RAM.
                             // attributes.Mods = Array.Empty<Mod>();
 
-                            return attributes;
+                            convertedAttributes.FirstObjectStartTime = beatmap.Beatmap.HitObjects.FirstOrDefault()?.StartTime ?? 0;
+                            convertedAttributes.LastObjectStartTime = beatmap.Beatmap.HitObjects.Any() ? beatmap.Beatmap.GetLastObjectTime() : 0;
+
+                            return convertedAttributes;
                         }
                         catch (Exception e)
                         {

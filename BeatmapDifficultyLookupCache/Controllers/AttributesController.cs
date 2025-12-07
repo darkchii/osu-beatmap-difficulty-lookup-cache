@@ -1,10 +1,11 @@
 // Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
-using System.Linq;
-using System.Threading.Tasks;
+using BeatmapDifficultyLookupCache.Models;
 using Microsoft.AspNetCore.Mvc;
 using osu.Game.Rulesets.Difficulty;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace BeatmapDifficultyLookupCache.Controllers
 {
@@ -20,6 +21,6 @@ namespace BeatmapDifficultyLookupCache.Controllers
         }
 
         [HttpPost]
-        public async Task<DifficultyAttributes> Post([FromBody] DifficultyRequest request) => await cache.GetAttributes(request);
+        public async Task<IExtendedDifficultyAttributes> Post([FromBody] DifficultyRequest request) => await cache.GetAttributes(request);
     }
 }
