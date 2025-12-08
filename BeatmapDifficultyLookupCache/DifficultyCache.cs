@@ -101,7 +101,7 @@ namespace BeatmapDifficultyLookupCache
                             // attributes.Mods = Array.Empty<Mod>();
 
                             convertedAttributes.FirstObjectStartTime = beatmap.Beatmap.HitObjects.FirstOrDefault()?.StartTime ?? 0;
-                            convertedAttributes.LastObjectStartTime = beatmap.Beatmap.HitObjects.Any() ? beatmap.Beatmap.GetLastObjectTime() : 0;
+                            convertedAttributes.LastObjectEndTime = beatmap.Beatmap.HitObjects.Any() ? beatmap.Beatmap.GetLastObjectTime() : 0;
 
                             return convertedAttributes;
                         }
