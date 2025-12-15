@@ -182,28 +182,14 @@ namespace BeatmapDifficultyLookupCache
             }
         }
 
-        private async Task<WorkingBeatmap> getBeatmap(int beatmapId)
+        public async Task<Stream> getBeatmapStream(int beatmapId)
         {
-            //Check if a local file exists (./beatmaps/{beatmapId}.osu), at exe path
             string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "beatmaps", $"{beatmapId}.osu");
 
             if (File.Exists(localPath))
             {
-                //If file is older than 1 week, we don't use it
-                var fileInfo = new FileInfo(localPath);
-                if (fileInfo.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-7))
-                {
-                    logger.LogInformation("Local beatmap file is older than 1 week, redownloading (beatmap: {BeatmapId})", beatmapId);
-                }
-                else
-                {
-                    logger.LogInformation("Using local beatmap file (beatmap: {BeatmapId})", beatmapId);
-                    using (var fs = File.OpenRead(localPath))
-                    {
-                        LoaderWorkingBeatmap wb = new LoaderWorkingBeatmap(fs);
-                        return wb;
-                    }
-                }
+                logger.LogInformation("Using local beatmap file (beatmap: {BeatmapId})", beatmapId);
+                return File.OpenRead(localPath);
             }
 
             var req = new WebRequest(string.Format(Environment.GetEnvironmentVariable("DOWNLOAD_PATH") ?? "https://osu.ppy.sh/osu/{0}", beatmapId))
@@ -215,8 +201,6 @@ namespace BeatmapDifficultyLookupCache
 
             if (req.ResponseStream.Length == 0)
                 throw new Exception($"Retrieved zero-length beatmap ({beatmapId})!");
-
-            LoaderWorkingBeatmap workingBeatmap = new LoaderWorkingBeatmap(req.ResponseStream, false);
 
             // Cache the beatmap locally for future use
             try
@@ -235,9 +219,13 @@ namespace BeatmapDifficultyLookupCache
                 logger.LogWarning("Failed to cache beatmap locally: {Message}", e.Message);
             }
 
-            req.ResponseStream.Dispose();
+            return req.ResponseStream;
+        }
 
-            return workingBeatmap;
+        private async Task<WorkingBeatmap> getBeatmap(int beatmapId)
+        {
+            Stream stream = await getBeatmapStream(beatmapId);
+            return new LoaderWorkingBeatmap(stream, true);
         }
 
         private static List<Ruleset> getRulesets()
