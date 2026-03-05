@@ -219,12 +219,10 @@ namespace BeatmapDifficultyLookupCache
                 logger.LogWarning("Failed to cache beatmap locally: {Message}", e.Message);
             }
 
-            req.ResponseStream.Seek(0, SeekOrigin.Begin);
-
             return req.ResponseStream;
         }
 
-        public async Task<WorkingBeatmap> getBeatmap(int beatmapId)
+        private async Task<WorkingBeatmap> getBeatmap(int beatmapId)
         {
             Stream stream = await getBeatmapStream(beatmapId);
             return new LoaderWorkingBeatmap(stream, true);
