@@ -188,24 +188,8 @@ namespace BeatmapDifficultyLookupCache
 
             if (File.Exists(localPath))
             {
-                //if over 2 weeks old, delete and go download route
-                if (DateTime.UtcNow - File.GetLastWriteTimeUtc(localPath) > TimeSpan.FromDays(14))
-                {
-                    try
-                    {
-                        File.Delete(localPath);
-                        logger.LogInformation("Deleted old beatmap file (beatmap: {BeatmapId})", beatmapId);
-                    }
-                    catch (Exception e)
-                    {
-                        logger.LogWarning("Failed to delete old beatmap file: {Message}", e.Message);
-                    }
-                }
-                else
-                {
-                    logger.LogInformation("Using local beatmap file (beatmap: {BeatmapId})", beatmapId);
-                    return File.OpenRead(localPath);
-                }
+                logger.LogInformation("Using local beatmap file (beatmap: {BeatmapId})", beatmapId);
+                return File.OpenRead(localPath);
             }
 
             var req = new WebRequest(string.Format(Environment.GetEnvironmentVariable("DOWNLOAD_PATH") ?? "https://osu.ppy.sh/osu/{0}", beatmapId))
