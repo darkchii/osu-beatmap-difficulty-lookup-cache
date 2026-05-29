@@ -212,6 +212,8 @@ namespace BeatmapDifficultyLookupCache
                 {
                     req.ResponseStream.Seek(0, SeekOrigin.Begin);
                     await req.ResponseStream.CopyToAsync(fs);
+                    //reset position
+                    req.ResponseStream.Seek(0, SeekOrigin.Begin);
                 }
             }
             catch (Exception e)
